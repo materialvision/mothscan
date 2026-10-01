@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mothscan — AudioMoth deployment scan</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0e14'/%3E%3Crect x='4' y='14' width='3' height='4' fill='%2322d3ee'/%3E%3Crect x='9' y='9' width='3' height='14' fill='%2322d3ee'/%3E%3Crect x='14' y='4' width='3' height='24' fill='%23a3e635'/%3E%3Crect x='19' y='11' width='3' height='10' fill='%2322d3ee'/%3E%3Crect x='24' y='15' width='3' height='2' fill='%23f43f5e'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#141922; --panel2:#1b2129; --line:#252c38;
+    --fg:#e6e9ef; --dim:#8b95a7; --accent:#22d3ee; --accent2:#a3e635;
+    --warn:#f59e0b; --mark:#f43f5e;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    padding:9px 14px; background:var(--panel); border-bottom:1px solid var(--line);
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+  }
+  header h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.02em}
+  header h1 span{color:var(--accent)}
+  .grow{flex:1}
+  .badge{
+    font-size:11px;padding:2px 7px;border-radius:999px;background:var(--panel2);
+    border:1px solid var(--line); color:var(--dim);
+  }
+  main{flex:1;display:flex;min-height:0}
+  #left{flex:1;display:flex;flex-direction:column;min-width:0;padding:9px 12px;gap:7px}
+  aside{width:344px;flex:0 0 344px;background:var(--panel);border-left:1px solid var(--line);
+        padding:12px;overflow-y:auto}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+  .card h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 8px}
+  label{display:block;font-size:11px;color:var(--dim);margin:8px 0 3px}
+  select,input[type=text]{
+    width:100%;background:#0e1218;color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:5px 7px;font:inherit;
+  }
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  button{background:var(--accent);color:#04141a;border:0;border-radius:6px;padding:7px 11px;
+         font:inherit;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+  button:disabled{opacity:.45;cursor:default}
+  button.on{background:var(--accent);color:#04141a;font-weight:700}
+  .row{display:flex;gap:8px;align-items:center}
+  .row.wrap{flex-wrap:wrap}
+  .val{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600}
+  #playbar{display:flex;align-items:center;gap:10px}
+  #playbar audio{height:32px;flex:1;min-width:0}
+  #status{font-size:11px;color:var(--dim);min-height:16px}
+  #stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;gap:5px}
+
+  /* ---- site lanes ---------------------------------------------------- */
+  #lanes{flex:1 1 0;display:flex;flex-direction:column;gap:5px;min-height:0}
+  /* flex-basis 0, not auto: with `auto` each lane is sized from its content, so
+     a lane whose canvas was measured slightly larger stays larger forever. */
+  .lane{position:relative;background:#05070b;border:1px solid var(--line);
+        border-radius:8px;overflow:hidden;display:flex;flex-direction:column;
+        flex:1 1 0;min-height:0}
+  .lane.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .lanehead{display:flex;align-items:center;gap:7px;padding:2px 7px;background:#0d1219;
+            border-bottom:1px solid var(--line);font-size:11px;flex:0 0 auto}
+  .lanehead .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .lanehead .nm{font-weight:600}
+  .lanehead .st{color:var(--dim)}
+  .lanehead .grow{flex:1}
+  .lanehead button{padding:2px 7px;font-size:10px;font-weight:500;border-radius:4px}
+  .lanestack{position:relative;flex:1;min-height:0}
+  .lane canvas{display:block;width:100%;height:100%;cursor:crosshair}
+  #wavewrap{flex:0 0 auto;height:132px}
+  #zoomwrap{flex:0 0 auto;height:88px}
+  .canvaswrap{position:relative;background:#05070b;border:1px solid var(--line);
+              border-radius:8px;overflow:hidden}
+  canvas{display:block;width:100%;height:100%}
+  .axis{position:absolute;left:6px;top:3px;font-size:10px;color:var(--dim);
+        pointer-events:none;text-shadow:0 1px 2px #000;z-index:2}
+  .hint{font-size:11px;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td{padding:3px 0;vertical-align:top}
+  td.k{color:var(--dim);width:92px}
+  td.v{font-variant-numeric:tabular-nums;word-break:break-all}
+  #log{font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
+       max-height:130px;overflow:auto;white-space:pre-wrap}
+  .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .pill{font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>moth<span>scan</span></h1>
+  <span class="badge" id="badge-index">index: …</span>
+  <span class="badge" id="badge-set">preview: …</span>
+  <span class="grow"></span>
+  <span class="hint">click any lane to seek — all sites share one hour grid · hover for source file</span>
+</header>
+
+<main>
+  <div id="left">
+    <div id="playbar">
+      <button id="stop" title="Stop (space)">■ stop</button>
+      <audio id="audio" controls preload="metadata"></audio>
+      <span class="hint" style="white-space:nowrap">play at</span>
+      <input type="range" id="playrate" min="0.25" max="4" step="0.05" value="1"
+             style="width:130px" title="playback speed">
+      <span class="val" id="playrateval" style="width:52px;text-align:right">1.00×</span>
+      <span class="hint" style="white-space:nowrap">pitch kept</span>
+    </div>
+    <div id="status">loading…</div>
+
+    <div id="stage">
+      <div id="lanes"></div>
+      <div class="canvaswrap" id="wavewrap">
+        <canvas id="wave"></canvas>
+        <div class="axis" id="waveaxis">waveform envelope — active site</div>
+      </div>
+      <div class="canvaswrap" id="zoomwrap">
+        <canvas id="zoom"></canvas>
+        <div class="axis">detail around playhead</div>
+      </div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card">
+      <h2>Sites</h2>
+      <div id="sites"></div>
+      <div class="hint" style="margin-top:8px">
+        One stream per WAV file set, one lane each, all on the same hour grid.
+        Switching site keeps the playhead on the <b>same wall-clock hour</b>.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Preview render</h2>
+      <div id="previewinfo" class="hint">—</div>
+      <label>Excerpt length <span class="val" id="cutval">0.50 s</span></label>
+      <input type="range" id="cut" min="0.1" max="2" step="0.05" value="0.5">
+      <label>Gap between excerpts
+        <span class="val" id="gapval">0.050 s</span></label>
+      <input type="range" id="gap" min="-2" max="0.5" step="0.005" value="0.05">
+      <div class="hint" style="margin-top:4px" id="gaphint">
+        Positive leaves silence between excerpts. <b>Negative overlaps them</b> —
+        the next excerpt starts while this one is still sounding.
+      </div>
+
+      <label>Crossfade <span class="val" id="fadeval">0.004 s</span></label>
+      <input type="range" id="fade" min="0" max="1" step="0.002" value="0.004">
+      <div class="hint" style="margin-top:4px">
+        Fade on each excerpt edge. When excerpts overlap this <i>is</i> the
+        crossfade, so raise it for a softer blend.
+      </div>
+      <label>Bake speed into the render <span class="val" id="speedval">1.00×</span></label>
+      <input type="range" id="speed" min="0.5" max="4" step="0.05" value="1">
+      <label>Speed changes</label>
+      <select id="speedmode">
+        <option value="pitch" selected>duration only — pitch preserved</option>
+        <option value="varispeed">duration and pitch — tape/varispeed</option>
+      </select>
+      <div class="hint" style="margin-top:4px">
+        Baked in at render time (2× = each excerpt half as long). Leave this at
+        1.00× and use <b>play at</b> above the timeline instead — that is live,
+        pitch-preserving, and needs no re-render.
+      </div>
+      <label>Preview sample rate</label>
+      <select id="rate">
+        <option value="16000" selected>16000 Hz (small, recommended)</option>
+        <option value="22050">22050 Hz</option>
+        <option value="32000">32000 Hz</option>
+        <option value="48000">48000 Hz (full)</option>
+      </select>
+      <label>Order</label>
+      <select id="order">
+        <option value="chronological" selected>chronological (time-compressed scan)</option>
+        <option value="score">strongest events first</option>
+      </select>
+      <label>Hours with no recording</label>
+      <select id="missing">
+        <option value="silence" selected>pad with silence — keeps sites in sync</option>
+        <option value="skip">skip them — shorter, gapless streams</option>
+      </select>
+
+      <label style="display:flex;align-items:center;gap:6px;margin-top:10px">
+        <input type="checkbox" id="limiter" checked style="width:auto">
+        <span>Limiter — push the loudest sounds down</span>
+      </label>
+      <label>Limiter ceiling <span class="val" id="ceilingval">−12.0 dBFS</span></label>
+      <input type="range" id="ceiling" min="-30" max="-1" step="0.5" value="-12">
+      <div class="hint" style="margin-top:4px">
+        Only ever <i>reduces</i> peaks, so a passing train cannot drown the birds.
+        The quiet events keep their relative level. Set it near 0 dBFS to hear the
+        raw material.
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="render">Render preview</button>
+        <span class="hint" id="rendermsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Point under cursor</h2>
+      <table id="ptab"><tbody><tr><td class="k">—</td><td class="v">hover a lane</td></tr></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>Export for Max/MSP</h2>
+      <div class="hint" style="margin-bottom:6px">
+        <span class="mono">coll</span> is index-addressable: line <i>i</i>+1 = event <i>i</i>.
+        Column 1 is the absolute grid hour, column 3 the offset into that site's WAV.
+      </div>
+      <div class="row wrap" style="margin-bottom:6px">
+        <span class="pill">scope</span>
+        <select id="exportscope" style="width:auto">
+          <option value="active" selected>active site only</option>
+          <option value="all">all sites (per-site files in one bundle)</option>
+        </select>
+      </div>
+      <div class="row wrap">
+        <button class="ghost" data-export="coll">points.coll</button>
+        <button class="ghost" data-export="cuepoints">cuepoints.coll</button>
+        <button class="ghost" data-export="csv">points.csv</button>
+        <button class="ghost" data-export="dict">dict.json</button>
+        <button class="ghost" data-export="maxpat">max notes</button>
+      </div>
+      <div id="exportmsg" class="hint" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Coverage &amp; gaps</h2>
+      <div id="coverage" class="hint">—</div>
+    </div>
+
+    <div class="card">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+
+const SITE_COLORS = ["#22d3ee", "#a3e635", "#f59e0b", "#f472b6", "#818cf8"];
+
+const S = {
+  meta: null,
+  sites: [],
+  active: null,
+  site: {},
+  cmap: null,
+  hover: null,
+  // Transport intent, tracked explicitly: reading `audio.paused` is unreliable
+  // mid-switch because assigning `src` pauses the element on its way to the new
+  // stream, which is exactly when we need to remember that the user wanted it
+  // playing.
+  playing: false,
+  // Grid epoch in seconds. NOTE: JS month indices are 0-based, so 0 is January.
+  // `Date.UTC(1970, 1, 1)` is 1 FEBRUARY 1970 and silently shifted every
+  // displayed hour forward by 31 days.
+  epoch: Date.UTC(1970, 0, 1) / 1000,
+};
+
+const $ = (id) => document.getElementById(id);
+const log = (m) => { const l = $("log"); l.textContent += m + "\n"; l.scrollTop = l.scrollHeight; };
+const fmt = (x, n = 2) => (x === null || x === undefined || Number.isNaN(x)) ? "–" : Number(x).toFixed(n);
+const colorOf = (site) => SITE_COLORS[Math.max(0, S.sites.indexOf(site)) % SITE_COLORS.length];
+
+function buildMagma() {
+  const stops = [
+    [0,0,4],[12,9,42],[45,14,86],[85,15,109],[124,30,120],[164,49,120],
+    [200,74,110],[231,105,93],[247,145,74],[252,190,74],[252,225,140],[252,253,191]
+  ];
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255 * (stops.length - 1);
+    const a = Math.floor(t), b = Math.min(stops.length - 1, a + 1), f = t - a;
+    for (let c = 0; c < 3; c++)
+      lut[i * 3 + c] = Math.round(stops[a][c] + (stops[b][c] - stops[a][c]) * f);
+  }
+  return lut;
+}
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(url + " -> " + r.status + " " + (await r.text()).slice(0, 200));
+  return r.json();
+}
+
+function halfToFloat(h) {
+  const s = (h & 0x8000) >> 15, e = (h & 0x7C00) >> 10, f = h & 0x03FF;
+  if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+  if (e === 31) return f ? NaN : (s ? -Infinity : Infinity);
+  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+}
+
+/** Absolute hour slot under a stream position - identical across sites. */
+function gridAt(site, t) {
+  const st = S.site[site];
+  if (!st || !st.slots.length) return null;
+  const i = Math.min(st.slots.length - 1, Math.max(0, Math.floor(t / S.meta.slot_seconds)));
+  return st.slots[i];
+}
+
+function utcOf(grid) {
+  const d = new Date((S.epoch + grid * 3600) * 1000);
+  return d.toISOString().replace(".000Z", "Z").replace("T", " ").replace("Z", " UTC");
+}
+
+// ---------------------------------------------------------------- load
+async function loadState() {
+  const st = await getJSON("/api/state");
+  $("badge-index").textContent = `index: ${st.index.total_points} points`;
+  $("log").textContent = "";
+  const by = Object.entries(st.index.by_site || {}).map(([k, v]) => `${k}:${v.n}`).join("  ");
+  log(`indexed points: ${st.index.total_points}  (${by})`);
+  return st;
+}
+
+async function loadSet(name, opts = {}) {
+  $("status").textContent = "loading " + name + " …";
+  const meta = await getJSON("/api/previews/" + encodeURIComponent(name));
+  S.meta = meta;
+  S.sites = Object.keys(meta.sites);
+  S.site = {};
+  S.hover = null;
+  // Keep the same site selected across a re-render when it still exists.
+  S.active = (opts.site && meta.sites[opts.site]) ? opts.site
+           : (S.active && meta.sites[S.active] ? S.active : S.sites[0]) || null;
+
+  $("badge-set").textContent =
+    `preview: ${meta.name} · ${S.sites.length} sites · slot ${meta.slot_seconds}s`;
+  log(`loaded ${meta.name}: ${S.sites.length} sites (${S.sites.join(", ")})`);
+
+  buildLaneDom();
+  await Promise.all(S.sites.map(loadSite));
+  S.playing = false;                   // the old element is about to be replaced
+  await setActiveSite(S.active, false);
+  watchResize();
+  drawAll();
+  renderCoverage();
+
+  // Resume at the hour we were on, on the freshly rendered stream.
+  if (opts.gridIndex !== undefined && opts.gridIndex !== null) {
+    await loadStream("/media/" + S.site[S.active].meta.wav,
+                     opts.gridIndex * (meta.slot_seconds || 1),
+                     !!opts.wasPlaying);
+    drawAll();
+  }
+  const origin = S.sites.length ? S.meta.sites[S.sites[0]].grid_origin : null;
+  $("status").textContent =
+    `${S.sites.length} site streams · one shared grid (origin ${origin}, slot ` +
+    `${meta.slot_seconds}s) · click to seek, "play" to switch site`;
+}
+
+async function loadSite(site) {
+  const sm = S.meta.sites[site];
+  const rec = { meta: sm, slots: [], env: null, specData: null, bitmap: null };
+  S.site[site] = rec;
+
+  const [slotsRes, specRes, envRes] = await Promise.all([
+    fetch(`/api/previews/${encodeURIComponent(S.meta.name)}/${encodeURIComponent(site)}/slots`),
+    fetch("/media/" + sm.assets.spec),
+    fetch("/media/" + sm.assets.env),
+  ]);
+  if (!slotsRes.ok) throw new Error(`slot table for ${site}: ${slotsRes.status}`);
+
+  rec.slots = (await slotsRes.text()).split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+  const sb = await specRes.arrayBuffer();
+  const dv = new DataView(sb);
+  rec.specShape = [dv.getFloat64(4, true), dv.getFloat64(12, true)];
+  rec.colsPerSec = dv.getFloat64(28, true);
+  rec.specData = new Uint8Array(sb, 4 + 48);
+
+  const eb = await envRes.arrayBuffer();
+  const edv = new DataView(eb);
+  rec.envN = edv.getFloat64(4, true);
+  rec.envRate = edv.getFloat64(20, true);
+  const u16 = new Uint16Array(eb, 28);
+  rec.env = new Float32Array(u16.length);
+  for (let i = 0; i < u16.length; i++) rec.env[i] = halfToFloat(u16[i]);
+
+  rec.bitmap = await buildBitmap(rec.specData, rec.specShape);
+  log(`  ${site}: ${rec.slots.length} hours, ${sm.n_audio_slots} with audio`
+      + (sm.n_silent_slots ? `, ${sm.n_silent_slots} silent` : ""));
+}
+
+async function buildBitmap(data, shape) {
+  const [nMels, nCols] = shape;
+  if (!nMels || !nCols) return null;
+  const img = new ImageData(nCols, nMels);
+  const px = img.data, lut = S.cmap;
+  for (let m = 0; m < nMels; m++) {
+    const row = nMels - 1 - m;
+    const sB = m * nCols, rB = row * nCols;
+    for (let c = 0; c < nCols; c++) {
+      const l = data[sB + c] * 3, o = (rB + c) * 4;
+      px[o] = lut[l]; px[o + 1] = lut[l + 1]; px[o + 2] = lut[l + 2]; px[o + 3] = 255;
+    }
+  }
+  try { return await createImageBitmap(img); }
+  catch (e) { log("bitmap failed for " + shape + ": " + e.message); return null; }
+}
+
+// ---------------------------------------------------------------- DOM
+function buildLaneDom() {
+  const host = $("lanes");
+  host.innerHTML = "";
+  for (const site of S.sites) {
+    const lane = document.createElement("div");
+    lane.className = "lane";
+    lane.dataset.site = site;
+    lane.innerHTML = `
+      <div class="lanehead">
+        <span class="dot" style="background:${colorOf(site)}"></span>
+        <span class="nm">${site}</span>
+        <span class="st" data-role="stats">…</span>
+        <span class="grow"></span>
+        <button data-role="play" class="ghost">play this site</button>
+      </div>
+      <div class="lanestack"><canvas></canvas>
+        <div class="axis" style="z-index:2">spectrogram (0–9 kHz) + waveform</div></div>`;
+    host.appendChild(lane);
+    lane.querySelector('[data-role="play"]').addEventListener("click", (e) => {
+      e.stopPropagation();
+      setActiveSite(site);
+    });
+    bindLane(lane, site);
+  }
+}
+
+function renderSiteList() {
+  const host = $("sites");
+  host.innerHTML = "";
+  for (const site of S.sites) {
+    const sm = S.meta.sites[site] || {};
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.cssText = "justify-content:space-between;margin:4px 0";
+    row.innerHTML = `
+      <span><span class="swatch" style="background:${colorOf(site)}"></span><b>${site}</b></span>
+      <span class="hint">${((sm.duration_s || 0) / 60).toFixed(2)} min · ${sm.n_audio_slots} pts${
+        sm.n_silent_slots ? ` · ${sm.n_silent_slots} silent` : ""}</span>
+      <button class="${site === S.active && S.playing ? "on" : "ghost"}" data-site="${site}"
+        style="padding:3px 8px;font-size:11px">${
+          site === S.active && S.playing ? "playing" : "play"}</button>`;
+    row.querySelector("button").addEventListener("click", () => setActiveSite(site));
+    host.appendChild(row);
+  }
+  // Also reflect the state on the lane headers.
+  for (const lane of document.querySelectorAll(".lane")) {
+    const b = lane.querySelector('[data-role="play"]');
+    const selected = lane.dataset.site === S.active;
+    const sounding = selected && S.playing;
+    b.className = sounding ? "on" : "ghost";
+    b.textContent = sounding ? "playing ▮" : (selected ? "paused" : "play this site");
+    lane.classList.toggle("active", selected);
+  }
+}
+
+function renderCoverage() {
+  const tl = S.meta.timeline || {};
+  const parts = [];
+  for (const site of S.sites) {
+    const c = (tl.sites || {})[site] || S.meta.sites[site]?.coverage || {};
+    const gaps = S.meta.sites[site]?.gaps || [];
+    parts.push(
+      `<div style="margin-bottom:7px">` +
+      `<span class="swatch" style="background:${colorOf(site)}"></span><b>${site}</b><br>` +
+      `&nbsp;&nbsp;${(c.first || "?").replace("T", " ").replace("Z", "")} → ` +
+      `${(c.last || "?").replace("T", " ").replace("Z", "")}<br>` +
+      `&nbsp;&nbsp;${c.slots ?? "?"} hours · ${c.missing_hours ?? 0} missing · ` +
+      `${c.coverage_pct ?? "?"}%` +
+      (gaps.length ? `<br>&nbsp;&nbsp;<span style="color:var(--mark)">${gaps.length} gap(s)</span>` : "") +
+      `</div>`);
+  }
+  $("coverage").innerHTML = parts.join("") || "—";
+}
+
+// ---------------------------------------------------------------- canvas
+function fitCanvas(cv) {
+  const r = cv.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(1, Math.round(r.width * dpr));
+  const h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return { w, h, dpr };
+}
+
+function drawLane(cv, site) {
+  const { w, h } = fitCanvas(cv);
+  const ctx = cv.getContext("2d");
+  const rec = S.site[site];
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#05070b"; ctx.fillRect(0, 0, w, h);
+  if (!rec) return;
+
+  const specH = Math.max(1, Math.round(h * 0.7));
+  if (rec.bitmap) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(rec.bitmap, 0, 0, w, specH);
+  } else {
+    ctx.fillStyle = "#8b95a7"; ctx.font = "11px ui-monospace";
+    ctx.fillText("decoding spectrogram…", 10, 20);
+  }
+
+  // Hours with no recording are highlighted rather than left as confusing
+  // silence - the difference matters when comparing sites.
+  const dur = rec.meta.duration_s || 1;
+  const per = S.meta.slot_seconds;
+  let run = null;
+  for (let i = 0; i <= rec.slots.length; i++) {
+    const silent = i < rec.slots.length && !rec.slots[i].audio;
+    if (silent && run === null) run = i;
+    if (!silent && run !== null) {
+      const x0 = (run * per / dur) * w, x1 = (i * per / dur) * w;
+      ctx.fillStyle = "rgba(244,63,94,0.18)";
+      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), specH);
+      ctx.strokeStyle = "rgba(244,63,94,0.55)";
+      ctx.beginPath(); ctx.moveTo(x0 + 0.5, 0); ctx.lineTo(x0 + 0.5, specH); ctx.stroke();
+      run = null;
+    }
+  }
+
+  // Substituted hours get a visible tag in the lane, so a borrowed excerpt is
+  // never mistaken for the hour's own audio.
+  ctx.fillStyle = "rgba(245,158,11,0.85)";
+  for (const sl of rec.slots) {
+    if (!sl.sub) continue;
+    const x0 = (sl.stream_s / dur) * w;
+    const x1 = ((sl.stream_s + per) / dur) * w;
+    ctx.fillRect(x0, 0, Math.max(2, x1 - x0), 3);
+  }
+
+  const waveTop = specH, waveH = h - specH, mid = waveTop + waveH / 2;
+  if (rec.env) {
+    ctx.fillStyle = "rgba(148,163,184,0.85)";
+    const cols = Math.max(1, Math.round(w));
+    for (let x = 0; x < cols; x++) {
+      const i0 = Math.floor(x / cols * rec.envN);
+      const i1 = Math.max(i0 + 1, Math.floor((x + 1) / cols * rec.envN));
+      let mn = Infinity, mx = -Infinity;
+      for (let i = i0; i < i1 && i < rec.envN; i++) {
+        const a = rec.env[i * 3], b = rec.env[i * 3 + 1];
+        if (a < mn) mn = a; if (b > mx) mx = b;
+      }
+      if (!isFinite(mn)) continue;
+      ctx.fillRect(x, mid - mx * (waveH / 2) * 0.92, 1,
+                   Math.max(1, (mx - mn) * (waveH / 2) * 0.92));
+    }
+  }
+  ctx.strokeStyle = "rgba(37,44,56,0.9)";
+  ctx.beginPath(); ctx.moveTo(0, waveTop + 0.5); ctx.lineTo(w, waveTop + 0.5); ctx.stroke();
+
+  if (site === S.active) {
+    ctx.strokeStyle = colorOf(site); ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  }
+
+  const px = (($("audio").currentTime || 0) / dur) * w;
+  ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke();
+
+  if (S.hover && S.hover.site === site) {
+    const s0 = S.hover.slot;
+    const x0 = (s0.stream_s / dur) * w;
+    const x1 = ((s0.stream_s + per) / dur) * w;
+    ctx.fillStyle = "rgba(163,230,53,0.22)";
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), h);
+  }
+
+  const head = cv.closest(".lane")?.querySelector('[data-role="stats"]');
+  if (head) {
+    head.textContent = `${(rec.meta.duration_s / 60).toFixed(1)} min · ` +
+      `${rec.meta.n_audio_slots} pts` +
+      (rec.meta.n_silent_slots ? ` · ${rec.meta.n_silent_slots} silent` : "");
+  }
+}
+
+function drawWaveform() {
+  const cv = $("wave"), { w, h } = fitCanvas(cv);
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#05070b"; ctx.fillRect(0, 0, w, h);
+  const site = S.active, rec = S.site[site];
+  if (!rec || !rec.env) return;
+  const dur = rec.meta.duration_s || 1, mid = h / 2;
+  ctx.fillStyle = colorOf(site);
+  const cols = Math.max(1, Math.round(w));
+  for (let x = 0; x < cols; x++) {
+    const i0 = Math.floor(x / cols * rec.envN);
+    const i1 = Math.max(i0 + 1, Math.floor((x + 1) / cols * rec.envN));
+    let mn = Infinity, mx = -Infinity;
+    for (let i = i0; i < i1 && i < rec.envN; i++) {
+      const a = rec.env[i * 3], b = rec.env[i * 3 + 1];
+      if (a < mn) mn = a; if (b > mx) mx = b;
+    }
+    if (!isFinite(mn)) continue;
+    ctx.fillRect(x, mid - mx * mid * 0.92, 1, Math.max(1, (mx - mn) * mid * 0.92));
+  }
+  ctx.fillStyle = "rgba(244,63,94,0.12)";
+  const per = S.meta.slot_seconds;
+  for (const sl of rec.slots) {
+    if (sl.audio) continue;
+    ctx.fillRect((sl.stream_s / dur) * w, 0, Math.max(1, (per / dur) * w), h);
+  }
+  ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 2;
+  const px = (($("audio").currentTime || 0) / dur) * w;
+  ctx.beginPath(); ctx.moveTo(px + 0.5, 0); ctx.lineTo(px + 0.5, h); ctx.stroke();
+  $("waveaxis").textContent =
+    `waveform envelope — ${site} (red bands = hours with no recording)`;
+}
+
+function drawZoom() {
+  const cv = $("zoom"), { w, h } = fitCanvas(cv);
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#05070b"; ctx.fillRect(0, 0, w, h);
+  const rec = S.site[S.active];
+  if (!rec || !rec.env) return;
+  const t = $("audio").currentTime || 0;
+  const span = Math.max(1.5, 6 * S.meta.slot_seconds);
+  const t0 = t - span / 2, t1 = t + span / 2;
+  const i0 = Math.max(0, Math.floor(t0 * rec.envRate));
+  const i1 = Math.min(rec.envN, Math.ceil(t1 * rec.envRate));
+  const mid = h / 2;
+
+  ctx.strokeStyle = colorOf(S.active); ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = 0; x < w; x++) {
+    const i = i0 + Math.floor(x / w * Math.max(1, i1 - i0));
+    if (i >= rec.envN) break;
+    ctx.moveTo(x + 0.5, mid - rec.env[i * 3 + 1] * mid * 0.9);
+    ctx.lineTo(x + 0.5, mid - rec.env[i * 3] * mid * 0.9);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(163,230,53,0.45)"; ctx.beginPath();
+  const first = Math.max(0, Math.floor(t0 / S.meta.slot_seconds));
+  const last = Math.min(rec.slots.length - 1, Math.ceil(t1 / S.meta.slot_seconds));
+  for (let i = first; i <= last; i++) {
+    const x = ((i * S.meta.slot_seconds - t0) / span) * w;
+    ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = "#f43f5e"; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(w / 2 + 0.5, 0); ctx.lineTo(w / 2 + 0.5, h); ctx.stroke();
+
+  const g = gridAt(S.active, t);
+  ctx.fillStyle = "#8b95a7"; ctx.font = "10px ui-monospace";
+  if (g) {
+    const note = g.sub ? `   [substituted from ${g.origin || "a nearby hour"}]` : "";
+    ctx.fillText(`${utcOf(g.grid)}  ·  ${g.name || "no recording"}${note}`, 6, 12);
+  }
+}
+
+/** Redraw everything, after layout has settled.
+ *
+ * Canvas backing size is taken from getBoundingClientRect, so calling this while
+ * flexbox is still resolving would size the bitmaps from a stale rect and leave
+ * the lanes stretched and blank.  Every call goes through a rAF for that reason.
+ */
+let _rafPending = false;
+function drawAll() {
+  if (!S.meta || _rafPending) return;
+  _rafPending = true;
+  // Two nested frames: the first lets flexbox apply the new lane sizes, the
+  // second measures and paints them.  Measuring in the same frame as a layout
+  // change is what produced blank, stretched lanes.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    _rafPending = false;
+    for (const lane of document.querySelectorAll(".lane")) {
+      const cv = lane.querySelector("canvas");
+      if (cv) drawLane(cv, lane.dataset.site);
+    }
+    drawWaveform(); drawZoom(); drawRuler();
+  }));
+}
+
+/** Watch for size changes (window resize, lane stack resolving, sidebar) and
+ *  redraw at the new size.  Without this the first paint can be mis-sized. */
+let _ro = null;
+function watchResize() {
+  if (_ro) return;
+  const host = document.getElementById("stage");
+  if (!host || typeof ResizeObserver === "undefined") return;
+  _ro = new ResizeObserver(() => drawAll());
+  _ro.observe(host);
+  for (const lane of document.querySelectorAll(".lanestack")) _ro.observe(lane);
+}
+
+function drawRuler() {
+  const lane = document.querySelector(".lane");
+  if (!lane) return;
+  const cv = lane.querySelector("canvas");
+  const { w } = fitCanvas(cv);
+  const ctx = cv.getContext("2d");
+  const dur = S.active && S.site[S.active] ? S.site[S.active].meta.duration_s : 1;
+  const choices = [1, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
+  const step = choices.find((s) => dur / s <= 10) || 3600;
+  ctx.save();
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textBaseline = "bottom";
+  for (let t = 0; t <= dur; t += step) {
+    const x = (t / dur) * w;
+    ctx.strokeStyle = "rgba(230,233,239,0.3)";
+    ctx.beginPath(); ctx.moveTo(x + 0.5, cv.height - 12); ctx.lineTo(x + 0.5, cv.height); ctx.stroke();
+    ctx.fillStyle = "rgba(230,233,239,0.75)";
+    const label = step >= 60
+      ? `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`
+      : `${t.toFixed(0)}s`;
+    ctx.fillText(label, x + 3, cv.height - 1);
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- interaction
+function bindLane(lane, site) {
+  const cv = lane.querySelector("canvas");
+  const timeAt = (ev) => {
+    const r = cv.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+    return frac * (S.site[site]?.meta.duration_s || 1);
+  };
+  cv.addEventListener("mousemove", (ev) => {
+    const sl = gridAt(site, timeAt(ev));
+    if (sl && (!S.hover || S.hover.slot !== sl || S.hover.site !== site)) {
+      S.hover = { site, slot: sl };
+      showPoint(site, sl);
+      drawAll();
+    }
+  });
+  cv.addEventListener("mouseleave", () => { S.hover = null; drawAll(); });
+  cv.addEventListener("mousedown", (ev) => seekTo(timeAt(ev)));
+}
+
+function seekTo(t) {
+  const a = $("audio");
+  const dur = S.site[S.active]?.meta.duration_s || 1;
+  a.currentTime = Math.max(0, Math.min(Math.max(0, dur - 0.001), t));
+  drawAll();
+}
+
+function showPoint(site, sl) {
+  const t = $("ptab").querySelector("tbody");
+  if (!sl) { t.innerHTML = `<tr><td class="k">—</td><td class="v">hover a lane</td></tr>`; return; }
+  t.innerHTML = `
+    <tr><td class="k">site</td><td class="v"><span class="swatch" style="background:${colorOf(site)}"></span>${site}</td></tr>
+    <tr><td class="k">absolute hour</td><td class="v">${utcOf(sl.grid)}</td></tr>
+    <tr><td class="k">grid index</td><td class="v">${sl.grid}</td></tr>
+    <tr><td class="k">source</td><td class="v">${sl.name || "<i>no recording</i>"}</td></tr>
+    <tr><td class="k">stream t</td><td class="v">${fmt(sl.stream_s, 3)} s</td></tr>
+    <tr><td class="k">cut in file</td><td class="v">${sl.cut_s === null ? "–" : fmt(sl.cut_s, 3) + " s"}</td></tr>
+    <tr><td class="k">event at</td><td class="v">${
+      sl.own_event_s === null || sl.own_event_s === undefined
+        ? (sl.event_s === null ? "—" : fmt(sl.event_s, 3) + " s")
+        : fmt(sl.own_event_s, 3) + " s"}${sl.sub ? " <span class=\"hint\">(own hour)</span>" : ""}</td></tr>
+    <tr><td class="k">score</td><td class="v">${sl.score === null ? "—" : fmt(sl.score, 3)}</td></tr>
+    <tr><td class="k">peak</td><td class="v">${sl.peak_db === null ? "–" : fmt(sl.peak_db, 1) + " dBFS"}${
+      sl.audio && !sl.gate ? ' <span style="color:var(--warn)">· below gate</span>' : ""}</td></tr>
+    <tr><td class="k">status</td><td class="v">${sl.audio
+      ? "excerpt present"
+      : '<span style="color:var(--mark)">silent slot — no recording</span>'}</td></tr>
+    ${sl.sub ? `<tr><td class="k">substituted</td><td class="v">
+        <span style="color:var(--warn)">took hour ${fmt(abs(sl.origin_grid - sl.grid), 0)}h
+        ${sl.origin_grid < sl.grid ? "earlier" : "later"}</span><br>
+        <span class="hint">${sl.origin || ""}, event at ${
+          sl.event_s === null ? "—" : fmt(sl.event_s, 3) + " s"}</span></td></tr>` : ""}
+    ${sl.noise > 0.01 ? `<tr><td class="k">contamination</td><td class="v">
+        ${fmt(sl.noise, 2)}${sl.noise_wind ? " · wind" : ""}${
+        sl.noise_sustained ? " · clipped" : ""}</td></tr>` : ""}`;
+}
+
+/**
+ * Make `site` the audible one, keeping the playhead on the same absolute hour.
+ *
+ * Assigning `src` resets the media element, which always pauses it - so if we
+ * were playing, we have to resume explicitly once the new stream is seekable.
+ * The resume is *not* a bare `play()` after setting `src`: the seek has to land
+ * first, otherwise the browser plays a moment of the old offset. We wait for
+ * `loadedmetadata` (or `seeked`, if the browser already had metadata) and only
+ * then continue.
+ */
+/**
+ * Point the player at a site's stream and resolve once it is seekable.
+ *
+ * Loading is the fiddly part of this UI: assigning `src` resets the element and
+ * pauses it, `loadedmetadata` can fire before the browser will accept a seek,
+ * and a stale listener from an earlier switch will happily fire on the wrong
+ * file. So this centralises all of it - one pending resolver, one listener,
+ * `load()` called explicitly, and a timeout so the caller is never left hanging.
+ */
+function loadStream(url, target, shouldPlay) {
+  const a = $("audio");
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (why) => {
+      if (done) return;
+      done = true;
+      a.removeEventListener("loadedmetadata", onMeta);
+      a.removeEventListener("canplay", onMeta);
+      if (target !== null && target !== undefined) {
+        try { a.currentTime = target; } catch (e) { /* not seekable yet */ }
+      }
+      if (shouldPlay) {
+        a.play().catch((err) => log("could not resume playback: " + err.message));
+      }
+      resolve(why);
+    };
+    const onMeta = () => finish("ready");
+    a.addEventListener("loadedmetadata", onMeta, { once: true });
+    a.addEventListener("canplay", onMeta, { once: true });
+    a.src = url;
+    a.load();                       // force a fresh fetch rather than trusting src
+    setTimeout(() => finish("timeout"), 4000);
+  });
+}
+
+/** The last stream URL this view loaded, so a re-render can be detected. */
+let _loadedWav = null;
+
+function setActiveSite(site, keepTime = true) {
+  if (!S.site[site]) return Promise.resolve();
+  const a = $("audio");
+  if (site === S.active) {
+    // Already the audible stream: treat the click as a transport toggle rather
+    // than doing nothing, so a paused site can be resumed from its own lane.
+    if (!S.playing) a.play().catch((err) => log("could not resume: " + err.message));
+    return Promise.resolve();
+  }
+  // Stream pitch, not the grid pitch: they differ when a render-time speed
+  // compressed the stream.
+  const slotSeconds = (S.site[site] && S.site[site].meta.slot_seconds)
+                   || S.meta.slot_seconds || 1;
+  const wasPlaying = S.playing;
+  const gridIndex = (keepTime && S.active) ? (a.currentTime || 0) / slotSeconds : null;
+
+  S.active = site;
+  const rec = S.site[site];
+  const target = gridIndex === null
+    ? null
+    : Math.max(0, Math.min((rec.meta.duration_s || 1) - 0.001,
+                           gridIndex * slotSeconds));
+
+  renderSiteList();
+  applyActiveSite();
+  drawAll();
+
+  _loadedWav = "/media/" + rec.meta.wav;
+  return loadStream(_loadedWav, target, wasPlaying).then(() => {
+    renderSiteList();
+    applyActiveSite();
+    drawAll();
+  });
+}
+function applyActiveSite() {
+  const rec = S.active && S.site[S.active];
+  $("previewinfo").innerHTML = rec
+    ? `<div><b>${S.meta.name}</b></div>
+       <div>${S.sites.length} sites · slot ${S.meta.slot_seconds}s · ${rec.meta.sample_rate} Hz</div>
+       <div>cut ${rec.meta.cut_seconds}s · gap ${rec.meta.gap_seconds}s · grid origin ${rec.meta.grid_origin}</div>
+       <div>limiter ${rec.meta.limiter
+          ? "on, ceiling " + rec.meta.limiter_ceiling_dbfs + " dBFS"
+          : "off"}</div>
+       <div>speed ${rec.meta.speed}× ${
+          rec.meta.speed_mode === "varispeed" ? "(varispeed, pitch follows)"
+                                              : "(pitch preserved)"}</div>
+       <div>active: <b>${S.active}</b> · ${(rec.meta.duration_s / 60).toFixed(2)} min · ${rec.meta.n_audio_slots} points</div>`
+    : "—";
+}
+
+// ---------------------------------------------------------------- controls
+function bindControls() {
+  const cut = $("cut"), gap = $("gap"), speed = $("speed");
+  cut.addEventListener("input", () => $("cutval").textContent = (+cut.value).toFixed(2) + " s");
+  const fade = $("fade");
+  const describeGap = () => {
+    const g = +gap.value, c = +cut.value;
+    const pitch = c + g;
+    const inst = pitch > 0 ? c / pitch : Infinity;
+    $("gapval").textContent = (g < 0 ? "−" + Math.abs(g).toFixed(3) : g.toFixed(3)) + " s";
+    let txt;
+    if (g < 0) {
+      txt = `<b>Overlapping by ${Math.abs(g).toFixed(3)} s</b> — ` +
+            `<b>${Math.round(inst)} excerpts sounding at once</b> ` +
+            `(${inst.toFixed(2)}×: cut ÷ slot pitch). Each slot advances ` +
+            `${pitch.toFixed(3)} s. Minimum is −${(c - 0.01).toFixed(2)} s ` +
+            `(a slot pitch of 0 would break site alignment). ` +
+            (pitch <= 0
+              ? '<span style="color:var(--mark)">Too much: the slot pitch would ' +
+                'be zero or negative, which breaks site alignment.</span>'
+              : `Stream is ${(100 * pitch / c).toFixed(0)}% of the sequential length.`);
+    } else {
+      txt = `${g.toFixed(3)} s of silence between excerpts.`;
+    }
+    $("gaphint").innerHTML = txt;
+    // The fade can never exceed half the excerpt, so cap the slider to match.
+    fade.max = Math.max(0.002, c / 2);
+    // The tightest legal overlap is `gap > -cut` (a slot pitch of zero would
+    // break site alignment and the server rejects it), so bound the slider by the
+    // current cut rather than letting it request something impossible.
+    gap.min = -(c - 0.01).toFixed(3);
+    if (+gap.value < +gap.min) gap.value = gap.min;
+  };
+  gap.addEventListener("input", describeGap);
+  cut.addEventListener("input", describeGap);
+  fade.addEventListener("input", () =>
+    $("fadeval").textContent = (+fade.value).toFixed(3) + " s");
+  describeGap();
+  $("fadeval").textContent = (+fade.value).toFixed(3) + " s";
+  speed.addEventListener("input", () => $("speedval").textContent = (+speed.value).toFixed(2) + "×");
+  const ceiling = $("ceiling");
+  const showCeiling = () => {
+    const v = +ceiling.value;
+    $("ceilingval").textContent =
+      (v <= -1 ? "−" + Math.abs(v).toFixed(1) : v.toFixed(1)) + " dBFS" +
+      (v > -1.5 ? " (effectively off)" : "");
+  };
+  ceiling.addEventListener("input", showCeiling);
+  showCeiling();
+
+  $("render").addEventListener("click", async () => {
+    const btn = $("render");
+    // Remember where we were so the new stream can start from the same hour
+    // instead of jumping back to zero.
+    const a = $("audio");
+    const per = S.meta ? S.meta.slot_seconds : 1;
+    const gridIndex = S.meta ? (a.currentTime || 0) / per : 0;
+    const wasPlaying = S.playing;
+
+    btn.disabled = true;
+    $("rendermsg").textContent = "rendering…";
+    try {
+      const res = await getJSON("/api/render", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cut_seconds: +cut.value, gap_seconds: +gap.value,
+          fade_seconds: +$("fade").value, speed: +speed.value,
+          out_sample_rate: +$("rate").value, order: $("order").value,
+          missing_policy: $("missing").value,
+          speed_mode: $("speedmode").value,
+          limiter: $("limiter").checked,
+          limiter_ceiling_dbfs: +$("ceiling").value,
+        }),
+      });
+      log(`rendered ${res.name}: ` + Object.entries(res.sites)
+        .map(([s, v]) => `${s} ${(v.duration_s / 60).toFixed(1)}min`).join(", "));
+
+      // "done" must mean *listening-ready*: reload the set and wait until the
+      // new stream is seekable again, otherwise the old audio keeps playing and
+      // it looks like nothing happened.
+      $("rendermsg").textContent = "loading audio…";
+      await loadSet(res.name, { gridIndex, wasPlaying });
+      $("rendermsg").textContent = wasPlaying ? "done — playing" : "done";
+    } catch (err) {
+      $("rendermsg").textContent = "failed";
+      log("render failed: " + err.message);
+    } finally { btn.disabled = false; }
+  });
+
+  for (const b of document.querySelectorAll("[data-export]"))
+    b.addEventListener("click", () => exportAs(b.dataset.export));
+
+  // ---- playback speed -------------------------------------------------
+  // Deliberately separate from the render-time `Speed`, which bakes the change
+  // into the WAV. This one is live and costs nothing, and it asks the browser to
+  // preserve pitch - which is both better quality than anything we can render
+  // offline and instantly adjustable, so it is the right way to skim a scan.
+  const audio = $("audio");
+  // ---- master transport -------------------------------------------------
+  // The native controls have pause, but no way to *stop*, and with audio that
+  // may be muted, scrolled past, or simply hard to see, an explicit stop is
+  // worth having. Stop pauses and rewinds to the start of the current excerpt,
+  // so pressing play again replays that excerpt rather than resuming mid-way.
+  const stopBtn = $("stop");
+  const stopPlayback = () => {
+    audio.pause();
+    S.playing = false;
+    const per = S.meta ? S.meta.slot_seconds : 0;
+    if (per > 0) {
+      const slot = Math.floor((audio.currentTime || 0) / per);
+      audio.currentTime = slot * per;
+    } else {
+      audio.currentTime = 0;
+    }
+    renderSiteList();
+    drawAll();
+    $("status").textContent = "stopped";
+  };
+  stopBtn.addEventListener("click", stopPlayback);
+  // Space is the usual transport key; ignore it while typing in a control.
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Space") return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" ||
+              t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    e.preventDefault();
+    if (S.playing) stopPlayback();
+    else audio.play().catch((err) => log("could not start: " + err.message));
+  });
+
+  const rate = $("playrate");
+  const applyRate = () => {
+    const v = +rate.value;
+    audio.playbackRate = v;
+    // Standard property plus the historical WebKit/Firefox spellings.
+    if ("preservesPitch" in audio) audio.preservesPitch = true;
+    if ("mozPreservesPitch" in audio) audio.mozPreservesPitch = true;
+    if ("webkitPreservesPitch" in audio) audio.webkitPreservesPitch = true;
+    $("playrateval").textContent = v.toFixed(2) + "×";
+  };
+  rate.addEventListener("input", applyRate);
+  applyRate();
+  audio.addEventListener("loadedmetadata", applyRate);
+
+  audio.addEventListener("timeupdate", drawPlayheads);
+  audio.addEventListener("loadedmetadata", drawAll);
+  // Track transport intent from the element itself, so the native controls and
+  // our lane buttons cannot disagree.
+  audio.addEventListener("play", () => { S.playing = true; renderSiteList(); });
+  audio.addEventListener("pause", () => { S.playing = false; renderSiteList(); });
+  audio.addEventListener("ended", () => { S.playing = false; renderSiteList(); });
+  requestAnimationFrame(function tick() {
+    if (!audio.paused) drawPlayheads();
+    requestAnimationFrame(tick);
+  });
+  window.addEventListener("resize", () => drawAll());
+}
+
+function drawPlayheads() {
+  if (!S.meta) return;
+  for (const lane of document.querySelectorAll(".lane"))
+    drawLane(lane.querySelector("canvas"), lane.dataset.site);
+  drawZoom();
+  drawWaveform();
+}
+
+async function exportAs(fmt) {
+  const scope = $("exportscope").value;
+  $("exportmsg").textContent = "exporting…";
+  // The export must use the same speed the preview was rendered with, or the
+  // stream_ms column would point into the wrong excerpt.
+  const p = new URLSearchParams({
+    cut: $("cut").value, gap: $("gap").value,
+    speed: (S.meta && S.meta.speed) ? S.meta.speed : 1,
+  });
+  if (scope === "active" && S.active) p.set("sites", S.active);
+  else p.set("per_site", "true");
+  try {
+    const r = await fetch("/api/export/" + fmt + "?" + p.toString());
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    const cd = r.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const name = m ? m[1] : `mothscan_${fmt}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+    $("exportmsg").textContent = "saved " + name;
+    log(`exported ${name} (${scope === "active" ? S.active : "all sites"})`);
+  } catch (err) {
+    $("exportmsg").textContent = "failed";
+    log("export failed: " + err.message);
+  }
+}
+
+// ---------------------------------------------------------------- boot
+(async function main() {
+  S.cmap = buildMagma();
+  bindControls();
+  try {
+    const st = await loadState();
+    const prev = st.previews || [];
+    if (prev.length) {
+      log(`preview sets: ${prev.map((p) => p.name).join(", ")}`);
+      await loadSet(prev[0].name);
+      log("ready.");
+    } else {
+      $("status").innerHTML =
+        "No preview rendered yet. Set excerpt length / gap, then press <b>Render preview</b>.";
+    }
+  } catch (err) {
+    log("startup error: " + err.message);
+    $("status").textContent = "Could not reach the API. Is the server running?";
+  }
+})();
+</script>
+</body>
+</html>

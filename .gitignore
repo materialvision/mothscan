@@ -1,0 +1,25 @@
+# ---- data and outputs -------------------------------------------------
+# The point of the tool is to chew through tens of gigabytes of field recordings
+# and emit caches, indexes and renders. None of it belongs in git.
+#
+# Note the pattern style: `data/*` (not `data/`) plus a negation for the one
+# directory we do want. Git cannot re-include a file inside an *excluded
+# directory*, so `data/` + `!data/shots/x.png` silently fails.
+data/*
+!data/shots/
+!data/shots/*.png
+
+# ---- python ----------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ---- editors / os ----------------------------------------------------
+.DS_Store
+*.swp
+.idea/
+.vscode/
