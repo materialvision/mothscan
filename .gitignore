@@ -22,4 +22,7 @@ __pycache__/
 .DS_Store
 *.swp
 .idea/
+
+# ---- local tooling ---------------------------------------------------
+.tools/
 .vscode/
