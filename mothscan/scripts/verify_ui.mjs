@@ -493,11 +493,19 @@ try {
     return {a, b, onPeak: await peakOf('verify_tmp_limon'),
             offPeak: await peakOf('verify_tmp_limoff')};
   })()`);
+  // An all-silent pair is almost always the source volume being unmounted, not
+  // a limiter fault - the renderer falls back to silence per unreadable excerpt.
+  // Reporting that as "the limiter failed" sends you hunting a bug that does not
+  // exist, so distinguish it explicitly.
+  const bothSilent = limiter.onPeak < -100 && limiter.offPeak < -100;
   check("limiter caps the rendered peak",
-        limiter.a && limiter.b &&
+        limiter.a && limiter.b && !bothSilent &&
         limiter.onPeak <= -11.5 && limiter.onPeak < limiter.offPeak - 0.5,
-        `peak with limiter ${limiter.onPeak.toFixed(2)} dBFS vs without ` +
-        `${limiter.offPeak.toFixed(2)} dBFS`);
+        bothSilent
+          ? "both renders are silent - the source recordings are unreadable " +
+            "(is the drive mounted?). Not a limiter fault."
+          : `peak with limiter ${limiter.onPeak.toFixed(2)} dBFS vs without ` +
+            `${limiter.offPeak.toFixed(2)} dBFS`);
 
   // ---- speed must mean "faster", and "pitch" must preserve pitch ----
   // Regression: the original implementation resampled, which *halved the sample

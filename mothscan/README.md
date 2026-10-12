@@ -549,11 +549,78 @@ comparable only per site).
 
 ## 4. Using it
 
-### 4.1 Command line
+### 4.1 Setup and running it
+
+`mothscan.sh` is the entry point. It resolves its own location, so it works from
+anywhere, and it finds a usable Python for you.
+
+**One-time setup** — creates the venv, installs the dependencies, then *imports
+them to prove it worked* rather than assuming:
 
 ```bash
 cd mothscan
-P=../.venv/bin/python
+./mothscan.sh setup
+```
+
+**Everyday use:**
+
+```bash
+./mothscan.sh start      # start the viewer in the background
+./mothscan.sh status     # is it running?  (exit 0 = yes, 1 = no — scriptable)
+./mothscan.sh logs       # tail the viewer log
+./mothscan.sh stop       # stop it
+./mothscan.sh restart    # stop then start
+
+./mothscan.sh open       # start if needed, print the URL, open a browser
+
+./mothscan.sh serve      # run in the FOREGROUND instead (ctrl-c to stop)
+```
+
+`start` is idempotent: if something is already answering on the port it says so
+and does nothing, so you cannot accidentally run two servers on one port. It also
+refuses to report success until the API actually responds, and if the process
+dies immediately it points you at `data/viewer.log` instead of leaving you
+guessing.
+
+**Analysing and rendering:**
+
+```bash
+./mothscan.sh scan --limit 200    # try a small sample first
+./mothscan.sh stats               # coverage, gate rates, top points
+./mothscan.sh preview             # render the per-site preview streams
+./mothscan.sh export              # write the Max/MSP coll files
+./mothscan.sh build               # all three, end to end
+./mothscan.sh test                # unit tests (no data or server needed)
+./mothscan.sh verify              # 34 headless behavioural checks on the viewer
+```
+
+**Configuration** — all optional, all environment variables:
+
+| variable | default | meaning |
+|---|---|---|
+| `MOTHSCAN_SITE_ROOT` | `/Volumes/Solardisk/Harpefoss` | where the recordings live |
+| `MOTHSCAN_SITES` | the three Harpefoss names | comma-separated site directories |
+| `MOTHSCAN_DATA_DIR` | `<repo>/data` | caches, index, renders (can be many GB) |
+| `MOTHSCAN_VENV` | first of `.venv`, `../.venv` | which Python environment to use |
+| `MOTHSCAN_PORT` | `8770` | viewer port |
+
+```bash
+export MOTHSCAN_SITE_ROOT=/path/to/recordings
+export MOTHSCAN_SITES="site-a,site-b,site-c"
+./mothscan.sh start
+```
+
+If no usable Python is found, the wrapper says exactly which paths it tried and
+how to fix it, rather than failing with an import traceback.
+
+### 4.2 The Python CLI directly
+
+The wrapper is a thin front-end; everything is also reachable as
+`python -m mothscan.cli <command>`, which is what to use when scripting or when
+you want the full flag list:
+
+```bash
+P=./.venv/bin/python        # or ../.venv/bin/python on the original checkout
 
 $P -m mothscan.cli scan                      # analyse everything -> index (resumable)
 $P -m mothscan.cli scan --limit 500           # quick trial
@@ -608,10 +675,13 @@ $P -m mothscan.cli preview && $P -m mothscan.cli export   # hear/export the new 
 
 `scan --weights ...` does the same thing in one pass on a fresh run.
 
-### 4.2 Browser viewer
+### 4.3 Browser viewer
 
 ```bash
-$P -m mothscan.cli serve            # http://127.0.0.1:8770
+./mothscan.sh open                  # start if needed, print URL, open a browser
+./mothscan.sh start                 # or just start it: http://127.0.0.1:8770
+./mothscan.sh logs                  # watch what it is doing
+./mothscan.sh stop                  # when done
 ```
 
 * **Three lanes, one per site**, stacked on a single shared time axis, each in
@@ -648,7 +718,7 @@ Absolute hours are shown in UTC and are derived from the same 1970-01-01 epoch
 the index uses; the displayed hour is cross-checked against each recording's
 filename by the test suite (5,558 slots, 0 mismatches).
 
-### 4.3 Adjustable preview parameters
+### 4.4 Adjustable preview parameters
 
 | parameter | default | effect |
 |---|---|---|
@@ -751,12 +821,24 @@ mothscan/
 ### Environment
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install numpy scipy soundfile matplotlib fastapi "uvicorn[standard]"
+./mothscan.sh setup            # recommended: venv + deps + an import check
 ```
 
-Set `MPLCONFIGDIR=data/.mplcache` if matplotlib complains about `~/.matplotlib`
-being unwritable (it is, on this machine).
+or by hand:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+The wrapper finds the venv itself (`.venv`, then `../.venv`, then
+`MOTHSCAN_VENV`) and sets `MPLCONFIGDIR` for you. Set it manually only if you
+call the Python modules directly and matplotlib complains about `~/.matplotlib`
+being unwritable (it is, on some machines):
+
+```bash
+export MPLCONFIGDIR="$PWD/../data/.mplcache"
+```
 
 ---
 

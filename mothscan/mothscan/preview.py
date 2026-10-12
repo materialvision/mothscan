@@ -46,7 +46,7 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
-from .config import PREVIEW_DIR, PreviewConfig
+from .config import SITE_ROOT, PREVIEW_DIR, PreviewConfig
 from .timeline import (
     MissingPolicy,
     PlannedSlot,
@@ -817,9 +817,22 @@ def _render_site(
             progress(site, n_done, plan.n_audio_slots)
 
     if failures:
-        # Not fatal, but it must not pass unnoticed.
+        # Not fatal - a preview of a partially-retrieved deployment is still
+        # useful - but it must not pass unnoticed, because silence is
+        # indistinguishable from an hour where nothing happened.
         print(f"  ! {site}: {len(failures)} excerpt(s) could not be read, "
               f"rendered as silence (first: {failures[0]})", file=sys.stderr)
+        # If *nothing* could be read, the overwhelmingly likely cause is that the
+        # source volume is not mounted. Say so, because otherwise this surfaces
+        # far downstream as an inexplicably silent render.
+        if len(failures) >= plan.n_audio_slots:
+            root = getattr(cfg, "site_root", None) or SITE_ROOT
+            if not Path(root).exists():
+                print(f"  ! {root} does not exist - is the drive mounted? "
+                      f"Everything would render as silence.", file=sys.stderr)
+            else:
+                print("  ! every excerpt failed - check the source paths above",
+                      file=sys.stderr)
 
     # The limiter runs once over the *mixed* buffer, not per excerpt. With
     # overlap the sum of two excerpts can exceed either one, and a per-excerpt
@@ -909,6 +922,13 @@ def build_preview(
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     name = name or f"scan_{stamp}"
+
+    # Pre-flight: if the source volume is not mounted, every render will be
+    # silence. Say so once, up front, rather than after minutes of work and a
+    # stream that looks plausible but plays nothing.
+    if not Path(SITE_ROOT).exists():
+        print(f"  ! source root {SITE_ROOT} does not exist - is the drive "
+              f"mounted? The render will be silent.", file=sys.stderr)
 
     renders: dict[str, SiteRender] = {}
     for site in wanted:

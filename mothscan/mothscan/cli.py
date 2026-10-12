@@ -367,15 +367,124 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _server_pidfile() -> "Path":
+    return DATA_DIR / "viewer.pid"
+
+
+def _server_alive(host: str, port: int, timeout: float = 2.0) -> bool:
+    """True if something is answering the viewer API on host:port."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(
+            f"http://{host}:{port}/api/state", timeout=timeout
+        ) as r:
+            return r.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
     import uvicorn
 
-    host = args.host
-    port = args.port
-    print(f"mothscan viewer -> http://{host}:{port}")
+    host, port = args.host, args.port
+    pidfile = _server_pidfile()
+    url = f"http://{host}:{port}"
+
+    # ---- stop ------------------------------------------------------------
+    if args.stop:
+        if not pidfile.exists():
+            print("no viewer pid file; nothing recorded as running")
+            return 0
+        try:
+            pid = int(pidfile.read_text().strip())
+        except (OSError, ValueError):
+            print(f"pid file {pidfile} is unreadable; removing it")
+            pidfile.unlink(missing_ok=True)
+            return 1
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            print(f"viewer (pid {pid}) is not running; removing stale pid file")
+            pidfile.unlink(missing_ok=True)
+            return 0
+        except PermissionError:
+            print(f"not permitted to stop pid {pid}")
+            return 1
+        # Give uvicorn a moment to release the port.
+        for _ in range(40):
+            if not _server_alive(host, port, timeout=0.3):
+                break
+            time.sleep(0.1)
+        pidfile.unlink(missing_ok=True)
+        print(f"stopped viewer (pid {pid})")
+        return 0
+
+    # ---- status ----------------------------------------------------------
+    if args.status:
+        pid_txt = pidfile.read_text().strip() if pidfile.exists() else None
+        alive = _server_alive(host, port)
+        if alive:
+            print(f"running at {url}" + (f" (pid {pid_txt})" if pid_txt else ""))
+            return 0
+        print(f"not responding at {url}")
+        if pid_txt:
+            print(f"  (pid file says {pid_txt}, which is stale)")
+        return 1
+
+    # ---- already running? ------------------------------------------------
+    if _server_alive(host, port):
+        print(f"a viewer is already responding at {url}")
+        print("  stop it with:  mothscan.sh stop    (or serve --stop)")
+        return 0
+
+    # ---- background ------------------------------------------------------
+    if args.bg:
+        # Detach properly rather than relying on the shell: the child gets its
+        # own session so it survives the terminal that launched it, which is the
+        # whole point of a start/stop system.
+        log = DATA_DIR / "viewer.log"
+        with open(log, "ab") as fh:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "mothscan.cli", "serve",
+                 "--host", host, "--port", str(port)],
+                stdout=fh, stderr=fh, stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        pidfile.write_text(str(proc.pid))
+        for _ in range(60):
+            if _server_alive(host, port, timeout=0.5):
+                print(f"mothscan viewer -> {url}")
+                print(f"  pid {proc.pid}, log {log}")
+                print("  stop with:  mothscan.sh stop")
+                return 0
+            if proc.poll() is not None:
+                print(f"viewer exited immediately; see {log}", file=sys.stderr)
+                pidfile.unlink(missing_ok=True)
+                return 1
+            time.sleep(0.25)
+        print(f"started (pid {proc.pid}) but not answering yet; see {log}",
+              file=sys.stderr)
+        return 1
+
+    # ---- foreground ------------------------------------------------------
+    print(f"mothscan viewer -> {url}")
     print("  (index and previews are read from data/; press ctrl-c to stop)")
-    uvicorn.run("mothscan.webapp:app", host=host, port=port, log_level="warning",
-                reload=False)
+    pidfile.write_text(str(os.getpid()))
+    try:
+        uvicorn.run("mothscan.webapp:app", host=host, port=port,
+                    log_level="warning", reload=False)
+    finally:
+        # Only clear the file if it is still ours.
+        if pidfile.exists() and pidfile.read_text().strip() == str(os.getpid()):
+            pidfile.unlink(missing_ok=True)
     return 0
 
 
@@ -533,9 +642,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None)
     p.set_defaults(func=cmd_pick)
 
-    p = sub.add_parser("serve", help="browser viewer")
+    p = sub.add_parser("serve", help="browser viewer (start / stop / status)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8770)
+    p.add_argument("--bg", action="store_true",
+                   help="run detached in the background and return")
+    p.add_argument("--stop", action="store_true", help="stop a background viewer")
+    p.add_argument("--status", action="store_true",
+                   help="report whether the viewer is responding")
     p.set_defaults(func=cmd_serve)
 
     return ap

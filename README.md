@@ -38,24 +38,33 @@ on 15 cores, then rendered into three aligned streams.
 ```bash
 git clone https://github.com/materialvision/mothscan.git
 cd mothscan
-
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+./mothscan.sh setup                      # venv + dependencies + an import check
 
 # point it at your recordings
 export MOTHSCAN_SITE_ROOT=/path/to/your/deployment   # default: /Volumes/Solardisk/Harpefoss
 export MOTHSCAN_SITES="site-a,site-b,site-c"         # default: the Harpefoss site names
 
-P=.venv/bin/python
-$P -m mothscan.cli scan --limit 200      # try 200 files first
-$P -m mothscan.cli stats                 # coverage and gate rates
-$P -m mothscan.cli preview               # render the per-site streams
-$P -m mothscan.cli serve                 # browser viewer on :8770
+./mothscan.sh scan --limit 200           # try 200 files first
+./mothscan.sh stats                      # coverage and gate rates
+./mothscan.sh preview                    # render the per-site streams
+./mothscan.sh start                      # viewer in the background
+./mothscan.sh open                       # ...or start it and open a browser
 ```
 
-`./mothscan.sh build` runs scan → preview → export in one go, and
-`./mothscan.sh verify` runs the headless behavioural test suite against a running
-viewer.
+The viewer has a proper lifecycle, so you are never guessing whether it is up:
+
+```bash
+./mothscan.sh status     # exit 0 = running, 1 = not (scriptable)
+./mothscan.sh logs       # tail data/viewer.log
+./mothscan.sh restart
+./mothscan.sh stop
+./mothscan.sh serve      # foreground instead, ctrl-c to stop
+```
+
+`start` is idempotent — it will not run a second server on the same port — and it
+does not report success until the API actually answers. Other commands:
+`build` (scan → preview → export), `test` (unit tests, no data needed), and
+`verify` (34 headless behavioural checks against the viewer).
 
 **Environment variables** (all optional):
 
@@ -155,7 +164,7 @@ mothscan/
     verify_ui.mjs          headless behavioural test of the viewer
     shoot.mjs              deterministic screenshot
   tests/test_preview.py    unit tests: speed, pitch, limiter, overlap, crossfade
-  mothscan.sh              convenience wrapper
+  mothscan.sh              entry point: setup / start / stop / status / logs / build
 ```
 
 ---
