@@ -188,6 +188,83 @@ def test_very_short_input_is_passed_through():
 
 
 # --------------------------------------------------------------------------
+# point selection: one recording per hour, never repeated
+# --------------------------------------------------------------------------
+
+
+class _Rec:
+    """Minimal stand-in for an EventRecord."""
+
+    def __init__(self, grid: int, name: str):
+        self.source_name = name
+        self.timestamp = _TS(grid)
+        self.passes_gate = True
+        self.transient = 1.0
+
+
+def _TS(grid: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return (epoch + timedelta(hours=grid)).isoformat().replace("+00:00", "Z")
+
+
+def test_selection_never_repeats_a_recording():
+    """Regression: an hour that borrowed a neighbour's excerpt made that
+    neighbour's recording play in two slots, which is the repeated clip that was
+    reported (and hard to spot, because only windy hours did it).
+
+    Each hour must now play its own audio, so the sequence of recordings is
+    distinct by construction - including for the hours that are wind-dominated
+    or clipped.
+    """
+    from mothscan.noise import Contamination, ContaminationConfig
+    from mothscan.select import select_points
+
+    slots = {g: _Rec(g, f"h{g}.WAV") for g in range(100, 140)}
+    classes = {}
+    for g in slots:
+        if g % 3 == 0:
+            classes[g] = Contamination(score=1.0, wind=True)     # unusable
+        elif g % 3 == 1:
+            classes[g] = Contamination(score=0.9, sustained=True)
+        else:
+            classes[g] = Contamination(score=0.0)
+
+    pts = select_points("s", slots, slots, ContaminationConfig(), classes=classes)
+
+    assert len(pts) == len(slots)
+    names = [p.record.source_name for p in pts if p.record is not None]
+    assert len(names) == len(slots), "every hour must have audio"
+    assert len(names) == len(set(names)), (
+        f"a recording is played more than once: "
+        f"{[n for n in names if names.count(n) > 1]}"
+    )
+    for k in range(len(names) - 1):
+        assert names[k] != names[k + 1], f"consecutive repeat at {k}"
+    # And each hour keeps its own file.
+    for p in pts:
+        assert p.record.source_name == f"h{p.grid_index}.WAV"
+        assert not p.substituted
+
+
+def test_contamination_is_still_reported():
+    """Dropping substitution must not stop us *detecting* bad hours - they are
+    flagged in the index, shown in the viewer and filterable in the exports."""
+    from mothscan.noise import Contamination, ContaminationConfig
+    from mothscan.select import select_points
+
+    slots = {g: _Rec(g, f"h{g}.WAV") for g in range(1, 11)}
+    classes = {g: Contamination(score=0.0) for g in slots}
+    classes[5] = Contamination(score=1.0, wind=True, clipped=True)
+
+    pts = select_points("s", slots, slots, ContaminationConfig(), classes=classes)
+    windy = [p for p in pts if p.contamination.wind]
+    assert len(windy) == 1 and windy[0].grid_index == 5
+    assert windy[0].record.source_name == "h5.WAV", "still plays its own audio"
+
+
+# --------------------------------------------------------------------------
 # speed must compress the whole stream, not just the audio in each slot
 # --------------------------------------------------------------------------
 

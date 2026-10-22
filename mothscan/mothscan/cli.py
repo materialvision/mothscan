@@ -549,14 +549,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--event-offset", type=float, default=None,
                    help="legacy fractional placement: event position inside the "
                         "analysed window, 0..1 (implies --event-lead-mode fraction)")
-    p.add_argument("--substitute", default="both",
-                   choices=["both", "back", "forward", "silence"],
-                   help="when an hour is wind-dominated or clipped, take the "
-                        "nearest acceptable hour instead (default both)")
     p.add_argument("--substitute-window", type=int, default=6,
-                   help="how many hours either side to search (default 6)")
+                   help="(unused) historical flag, kept so old scripts run")
+    # Substitution is gone. The flags remain so existing command lines and
+    # scripts do not break, but all of them now mean the same thing: every hour
+    # plays its own recording, and contamination is only flagged.
+    p.add_argument("--substitute", default="none",
+                   choices=["none", "both", "back", "forward", "silence"],
+                   help="accepted for compatibility; every hour now plays its own "
+                        "recording (contamination is flagged, not replaced)")
     p.add_argument("--no-substitute", dest="substitute", action="store_const",
-                   const="silence", help="flag bad hours instead of replacing them")
+                   const="none", help="(default) flag bad hours, never replace")
     p.set_defaults(func=cmd_scan)
 
     p = sub.add_parser("retune", help="re-score cached features with new weights")

@@ -300,15 +300,19 @@ def is_excluded(score: float, cfg: ContaminationConfig | None = None) -> bool:
 
 @dataclass
 class SubstitutionConfig:
-    """How to fill an hour whose own excerpt is unusable.
+    """Vestigial: nearby-hour substitution has been removed.
 
-    ``SEARCH_BACK``  use the nearest earlier hour that is acceptable
-    ``SEARCH_FORWARD`` use the nearest later hour
-    ``SEARCH_BOTH``  nearest in either direction
-    ``SILENCE``      emit silence and mark the slot
+    Kept only so existing configuration and the ``--substitute*`` flags still
+    parse. Every hour now plays its own recording, and contamination is flagged
+    rather than replaced - see ``select.select_points`` for why.
+
+    Borrowing a neighbour's excerpt made that recording play in two slots (the
+    repeated-clip fault), and it placed one hour's sound into another hour, which
+    breaks what the grid means. The search this class used to parameterise is in
+    the git history if it is ever wanted again.
     """
 
-    mode: str = "both"                 # both | back | forward | silence
+    mode: str = "none"                 # unused
     #: How far to look, in hours, before giving up.
     max_distance_h: int = 6
     #: A substitute must be at least this much cleaner than the original,
@@ -323,51 +327,3 @@ class SubstitutionConfig:
     avoid_reuse: bool = True
 
 
-def find_substitute(
-    site_slots: dict[int, object],
-    grid_index: int,
-    scores: dict[int, float],
-    cfg: SubstitutionConfig | None = None,
-    contam: ContaminationConfig | None = None,
-    used: set[int] | None = None,
-) -> tuple[int, object] | None:
-    """Find the nearest acceptable hour to stand in for ``grid_index``.
-
-    ``site_slots`` maps grid index -> record for one site, ``scores`` maps grid
-    index -> contamination score.  ``used`` is the set of neighbours already
-    borrowed by another hour; when ``cfg.avoid_reuse`` is set they are skipped.
-
-    Candidates are ordered by distance, so the closest acceptable hour wins
-    regardless of direction.  Returns ``(grid_index, record)`` or None.
-    """
-    cfg = cfg or SubstitutionConfig()
-    contam = contam or ContaminationConfig()
-    own = scores.get(grid_index, 0.0)
-    used = used or set()
-
-    candidates: list[int] = []
-    for d in range(1, cfg.max_distance_h + 1):
-        if cfg.mode in ("both", "back"):
-            candidates.append(grid_index - d)
-        if cfg.mode in ("both", "forward"):
-            candidates.append(grid_index + d)
-    if cfg.mode == "both":
-        # Nearest hour overall, not all-backward-then-all-forward.
-        candidates.sort(key=lambda g: (abs(g - grid_index), g))
-
-    fallback: tuple[int, object] | None = None
-    for g in candidates:
-        rec = site_slots.get(g)
-        if rec is None:
-            continue
-        s = scores.get(g, 0.0)
-        if s > cfg.max_substitute_score:
-            continue
-        if own - s < cfg.min_score_gain:
-            continue
-        if cfg.avoid_reuse and g in used:
-            if fallback is None:
-                fallback = (g, rec)
-            continue
-        return g, rec
-    return fallback

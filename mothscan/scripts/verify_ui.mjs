@@ -595,6 +595,31 @@ try {
         `pitch -> speed ${modes.pitch.speed} mode ${modes.pitch.mode}; ` +
         `varispeed -> speed ${modes.varispeed.speed} mode ${modes.varispeed.mode}`);
 
+  // ---- no recording may be played in two slots ----
+  // Regression: a contaminated hour used to borrow a neighbour's excerpt, which
+  // made that neighbour's recording play twice. Checking the rendered slot
+  // tables is the ground truth - it catches it however the selection is done.
+  const noRepeats = await s.eval(`(() => {
+    const out = {};
+    for (const site of S.sites) {
+      const slots = S.site[site].slots.filter(x => x.audio);
+      const names = slots.map(x => x.name);
+      let consec = 0;
+      for (let i = 1; i < names.length; i++) if (names[i] === names[i-1]) consec++;
+      out[site] = {n: names.length, consec,
+                   dupes: names.length - new Set(names).size};
+    }
+    return out;
+  })()`);
+  const totalDupes = Object.values(noRepeats).reduce((a, x) => a + x.dupes, 0);
+  const totalConsec = Object.values(noRepeats).reduce((a, x) => a + x.consec, 0);
+  const totalClips = Object.values(noRepeats).reduce((a, x) => a + x.n, 0);
+  check("no recording is played in two slots",
+        totalDupes === 0 && totalConsec === 0 && totalClips > 5000,
+        Object.entries(noRepeats).map(([k, v]) =>
+          `${k}: ${v.n} clips, ${v.consec} consecutive, ${v.dupes} duplicate`
+        ).join(" | "));
+
   // ---- master stop must actually stop the audio ----
   const stopped = await s.eval(`(async () => {
     const a = document.getElementById('audio');

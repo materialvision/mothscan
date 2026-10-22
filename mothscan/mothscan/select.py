@@ -40,7 +40,6 @@ from .noise import (
     ContaminationConfig,
     SubstitutionConfig,
     classify,
-    find_substitute,
 )
 
 
@@ -87,72 +86,56 @@ def select_points(
     site: str,
     site_slots: dict[int, object],
     indicators: dict[int, object],
-    sub_cfg: SubstitutionConfig | None = None,
     contam_cfg: ContaminationConfig | None = None,
     classes: dict[int, Contamination] | None = None,
+    # Accepted for call-site compatibility; substitution is no longer performed.
+    sub_cfg: SubstitutionConfig | None = None,
 ) -> list[SelectedPoint]:
-    """Pick one point per hour, substituting from a neighbour when unusable.
+    """Pick one point per hour. Each hour plays its own recording.
 
     ``site_slots`` maps grid index -> record for the site, ``indicators`` maps
     grid index -> anything :func:`classify` accepts (a FileFeatures, normally).
     Pass ``classes`` to supply verdicts directly and skip classification.
     """
-    sub_cfg = sub_cfg or SubstitutionConfig()
     contam_cfg = contam_cfg or ContaminationConfig()
 
     if classes is None:
         classes = {g: classify(ind, contam_cfg) for g, ind in indicators.items()}
     scores: dict[int, float] = {g: c.score for g, c in classes.items()}
 
-    used_substitutes: set[int] = set()
+    # One point per hour, and it always plays *its own* recording.
+    #
+    # Borrowing a neighbour's hour existed to avoid deliberately listening to
+    # wind rumble or a railed microphone. It caused a worse problem than it
+    # solved: a neighbour's recording played in two slots (the borrowed hour and
+    # the neighbour's own), which is the repeated clip that was reported, and it
+    # was hard to see because it only happened for windy hours whose donor was
+    # itself in the stream.
+    #
+    # Contamination is still detected, recorded and reported - it shows as amber
+    # tags in the viewer and as the `noise` column in the exports - but it no
+    # longer changes which audio plays. A windy hour sounds windy, honestly.
+    # With this, "no recording is heard twice" holds by construction: slot i
+    # plays recording i, and the recordings are distinct.
     out: list[SelectedPoint] = []
     for grid in sorted(site_slots):
         own = site_slots[grid]
         mine = classes.get(grid, Contamination())
-        rec = own
-        substituted = False
-        origin_grid = None
-        origin_name = None
-        sub_score = 0.0
-        reason = ""
-
-        if mine.unusable and sub_cfg.mode != "silence":
-            found = find_substitute(site_slots, grid, scores, sub_cfg, contam_cfg,
-                                    used=used_substitutes)
-            if found is not None:
-                # Record the borrow even when it was a fallback, so the next
-                # wind-dominated hour still prefers a different neighbour.
-                used_substitutes.add(found[0])
-                g2, other = found
-                rec = other
-                substituted = True
-                origin_grid = g2
-                origin_name = getattr(other, "source_name", None)
-                sub_score = scores.get(g2, 0.0)
-                why = []
-                if mine.wind:
-                    why.append("wind-dominated")
-                if mine.sustained:
-                    why.append("sustained clipping")
-                reason = (
-                    f"{' and '.join(why) or 'contaminated'}; took hour "
-                    f"{g2 - grid:+d} instead"
-                )
-
         out.append(
             SelectedPoint(
                 grid_index=grid,
                 site=site,
-                record=rec,
+                record=own,
                 own_record=own,
                 contamination=mine,
-                substituted=substituted,
-                origin_grid=origin_grid,
-                origin_name=origin_name,
-                substitute_score=sub_score,
-                reason=reason,
+                substituted=False,
+                origin_grid=None,
+                origin_name=None,
+                substitute_score=0.0,
+                reason="",
             )
         )
+    out.sort(key=lambda p: p.grid_index)
     return out
 
 

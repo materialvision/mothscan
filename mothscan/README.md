@@ -128,12 +128,13 @@ things and conflating them caused a bug:
 
 | | this hour's own recording | the audio actually used |
 |---|---|---|
-| file | `source_name` | `audio_name` (= `origin_name` when substituted) |
+| file | `source_name` | `audio_name` (identical now that nothing is borrowed) |
 | cut | `cut_s` | `audio_cut_s` |
 | event | `event_s` | `audio_event_s` |
 
-A substituted hour reports *its own* event in the viewer, but is *placed* using
-the borrowed recording's event — mixing the two put the excerpt around an event
+Historically a substituted hour reported *its own* event in the viewer but was
+*placed* using the borrowed recording's event, and mixing those two put the
+excerpt around an event
 that was not in the file being read.
 
 ### 2.6 Loudness levelling (the limiter)
@@ -392,43 +393,49 @@ curve, because clipping is localised — one pinned wingbeat should not condemn 
 otherwise excellent hour.
 
 **2. If the hour is unusable, play a nearby hour instead.** Wind is not
-localised, so a wind-dominated hour cannot be rescued by moving the window. For
-those, the picker takes the **nearest acceptable neighbour's** excerpt and
-records where it came from:
+localised, so a wind-dominated hour cannot be rescued by moving the window.
 
-```
-hour 494296 (2026-05-22 16:00Z)  own file 20260522_160000.WAV, own cut 54.869 s
-   noise score 0.46, wind-dominated
-   -> plays 20260522_170000.WAV at its own cut 46.261 s   (a different hour, +1)
-   verified: rendered low-band share 8.0 % (clean) instead of 48.6 % (windy)
-```
+**Those hours keep their own audio.** They are flagged, not replaced.
 
-The substitution is **explicit, never silent**:
+### Why there is no nearby-hour substitution
 
-* the point keeps its own hour for the timeline and the export's `grid` column;
-* `cut_s` / `path` describe the audio actually used (the neighbour's);
-* `origin_grid` / `origin_name` / `substitution_reason` name where it came from;
-* it is bounded (default ±6 h), requires the substitute to be meaningfully
-  cleaner, and a neighbour is not reused by consecutive hours — a storm lasts
-  hours, and without that rule a whole windy night would replay one excerpt.
+An earlier version took the **nearest acceptable neighbour's** excerpt for a
+contaminated hour, and recorded where it came from. It worked, in the sense that
+the preview sounded cleaner. It was removed because it caused a worse fault than
+it fixed:
+
+* the borrowed recording played **twice** — once in the hour that borrowed it and
+  once in its own hour, if that hour was also in the stream. That is the "some
+  clips repeat" bug: intermittent because it needed a windy hour *and* a donor
+  that was itself scheduled, and it was invisible in the viewer;
+* it put a moment from one hour into a *different* hour, which is wrong for
+  anything time-based — the grid is meant to say "this is what 16:00 sounded
+  like", and a borrowed excerpt quietly breaks that promise;
+* it needed a reuse policy (don't lend the same neighbour twice), a search window,
+  a cleanliness margin, and a fallback — all of it machinery whose only purpose
+  was to paper over the first problem.
+
+With substitution gone, "no recording is heard twice" holds **by construction**:
+slot *i* plays recording *i*, and the recordings are distinct. Contamination
+detection is untouched — it still drives the `noise` column, the viewer's amber
+tags and the exports' filterability. A windy hour now simply sounds windy.
 
 ### Result across this deployment
 
 ```
-hours taking a neighbour's excerpt: 368 of 5558  (6.62 %)
-  moth oculus    213 / 2376      wind 203, rail-touch 254, sustained clipping 13
+hours flagged contaminated:  368 of 5558  (6.62 %)
+  moth oculus    216 / 2376      wind 203, rail-touch 254, sustained clipping 13
   moth-juvet       1 / 2377      wind   1, rail-touch 124
-  moth-kvarvet   154 /  805      wind 161, rail-touch 161
+  moth-kvarvet   161 /  805      wind 161, rail-touch 161
 ```
 
 The exposure is exactly where you would expect it: `moth-juvet` is essentially
-wind-free (one hour), while the two exposed sites lose ~7–19 % of their hours.
+wind-free (one hour), while the two exposed sites lose ~7–20 % of their hours to
+wind or a railed converter.
 
-Of 365 wind-flagged hours, **355 took a neighbour**; the remaining 10 sit inside
-multi-day storms where *every* hour within range is also windy. There is no clean
-alternative to borrow, so they keep a high `noise` score and `substituted = 0` —
-flagged, not quietly filled with equally bad audio. Filter them in Max with
-`column 11 <= 400 and column 12 == 0`.
+To hear only clean hours, filter on the export's `noise` column (11) —
+`column 11 <= 400` — or watch for the amber tags in the viewer. Nothing is
+silently dropped, and nothing is silently duplicated.
 
 Mean contamination of the hours actually presented falls to **0.064 / 0.035 /
 0.146** (oculus / juvet / kvarvet).
@@ -452,7 +459,7 @@ Mean contamination of the hours actually presented falls to **0.064 / 0.035 /
   moth-kvarvet     805 points,   618 passed the activity gate ( 76.8%), mean score 3.36
 
   wind-dominated: 365    touched the converter rail: 539    sustained clipping: 13
-  nearby-hour substitution: 368 hours (6.62%)
+  hours flagged contaminated: 368 (6.62 %) - flagged, not replaced
 ```
 
 Artefacts:
@@ -634,10 +641,9 @@ $P -m mothscan.cli serve                      # browser viewer on :8770
 
 # wind / clipping handling
 $P -m mothscan.cli scan --refresh              # recompute cached features (after a detector change)
-$P -m mothscan.cli scan --substitute both      # default: nearest acceptable hour
-$P -m mothscan.cli scan --substitute silence   # flag bad hours instead of replacing them
-$P -m mothscan.cli scan --substitute-window 12 # search further for a clean hour
-$P -m mothscan.cli scan --no-substitute        # leave every hour as it is
+# contamination is detected and flagged, never replaced: every hour plays its
+# own recording. The old --substitute* flags are still accepted so existing
+# scripts run, but all of them now mean the same thing.
 
 # one site only
 $P -m mothscan.cli preview --sites "moth oculus" --name oculus_only
@@ -759,19 +765,18 @@ with a `;` header line, as `coll` imports expect).
 | 10 | `epoch_hour` — hours since 1970-01-01T00:00Z |
 | 11 | **`noise`** — contamination score × 1000 (wind / clipping) |
 | 12 | **`flags`** — wind×1 + clipped×2 + sustained×4 |
-| 13 | **`substituted`** — 1 when the audio came from a different hour |
+| 13 | **`substituted`** — always 0 now; kept so old patches still parse |
 | 14 | **`origin_grid`** — grid hour the audio came from, or −1 |
 | 15 | quoted absolute source path (a Max symbol) |
 
 ```
 ; mothscan cue points - site moth oculus - 2376 events cut=0.5s gap=0.05s
-50 494296 494244 28600 54869 55045 500 3556 -361 0 494296 457 1 1 494297 "/Volumes/Solardisk/Harpefoss/moth oculus/20260522_170000.WAV"
-                                                       ^noise ^flags ^sub ^origin
+50 494296 494244 28600 54869 55045 500 3556 -361 0 494296 457 1 0 -1 "/Volumes/Solardisk/Harpefoss/moth oculus/20260522_160000.WAV"
+                                                       ^noise ^flags ^sub
 ```
-Row 50 is a substituted hour: its own hour (494296) was wind-dominated
-(`noise 457`, `flags 1` = wind), so the audio and the path come from hour
-494297 instead — `cut_ms 54869` is *that* hour's cut, not the original's 54869.
-Filter to clean hours only with `column 11 <= 400 and column 12 == 0`.
+Row 50 is a wind-dominated hour (`noise 457`, `flags 1` = wind). It still plays
+its own file and its own cut — `sub 0`, `origin -1`, and the path is its own
+hour. Filter to clean hours only with `column 11 <= 400`.
 
 * **Column 3** → play that site's preview: `[coll] → [line 3] → [sfplay~]`.
 * **Columns 4 + 11** → play the original recordings: read the cut position and
@@ -781,8 +786,9 @@ Filter to clean hours only with `column 11 <= 400 and column 12 == 0`.
   respective streams. Absolute instant = `epoch + grid × 3600 s`.
 * **Column 9** → skip hours where nothing crossed the activity gate.
 * **Column 7** → sort by strength to play only the best events of a site.
-* **Columns 11–14** → wind/clip provenance. `13 = 1` means the excerpt was
-  borrowed from `14`; `11` is how contaminated the hour it replaced was.
+* **Columns 11–14** → wind/clip provenance, for filtering. `11` is how
+  contaminated the hour is, `12` is the flag bitset. Columns 13–14 are retained
+  in the format for old patches but are now always `0` / `-1`.
 
 `max_notes.txt` in the export directory contains these recipes (including a
 three-site aligned-playback recipe) as a Max-patch ready reference.
@@ -800,8 +806,8 @@ mothscan/
     pipeline.py      discovery, parallel analysis, resumable runs, retune
     index_store.py   SQLite + JSONL index, feature cache
     timeline.py      the shared hourly grid, slot mapping, missing-data policy
-    noise.py         wind / clipping detection, penalties, substitution policy
-    select.py        final point choice incl. nearby-hour substitution
+    noise.py         wind / clipping detection, penalties
+    select.py        final point choice (one per hour, own audio)
     preview.py       per-site pulse-train renderer + binary browser assets
     export.py        per-site coll / cuepoints / csv / dict / Max notes
     webapp.py        FastAPI: multi-site viewer, metadata, render, export

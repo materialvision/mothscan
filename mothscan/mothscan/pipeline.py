@@ -279,12 +279,17 @@ def run(
                     progress(summary)
     flush()
 
-    # ---- stage 2: nearby-hour substitution ---------------------------
-    # Runs after every hour has been scored, because it needs the whole
-    # deployment's contamination picture to decide what is worth replacing.
-    summary["substitution"] = substitute_contaminated(
-        store, run_cfg.sites, run_cfg.substitution, run_cfg.contamination
-    )
+    # ---- stage 2: clear any stale substitution ------------------------
+    # Each hour now plays its own recording. Substitution is gone: borrowing a
+    # neighbour made one recording play in two slots (the repeated clip bug) and
+    # removed the honest sound of a windy hour in exchange for a cleaner one that
+    # was never recorded at that time. Contamination is still flagged, so it
+    # remains visible and filterable, but it no longer redirects playback.
+    #
+    # This call exists only to *undo* substitute rows written by older versions,
+    # so an index built before the change is repaired rather than left pointing
+    # at borrowed audio.
+    summary["substitution"] = {"reverted": revert_substitutions(store)}
 
     summary["wall_seconds"] = time.perf_counter() - t0
     summary["errors_detail"] = error_lines[:50]
@@ -298,99 +303,32 @@ def run(
     return summary
 
 
-def substitute_contaminated(
-    store: IndexStore,
-    sites: Iterable[str],
-    sub_cfg: SubstitutionConfig | None = None,
-    contam_cfg: ContaminationConfig | None = None,
-) -> dict:
-    """Replace unusable hours with the nearest acceptable hour's excerpt.
+def revert_substitutions(store: IndexStore) -> int:
+    """Clear borrowed-audio fields from rows written by an older version.
 
-    Reads the freshly written index back (cheap - it is 5.5 k small rows), groups
-    by site and grid hour, and rewrites only the rows whose source changed.  The
-    chosen point keeps its own hour for the timeline and the export's grid
-    column, and gains ``origin_*`` naming where the audio actually came from.
+    Each hour must play its own recording. Earlier versions replaced unusable
+    hours with a neighbour's excerpt, storing the borrow in ``origin_*``. Those
+    rows are repaired here: the borrow is cleared and ``substituted`` reset, so
+    ``audio_path`` points back at the recording the hour actually is.
     """
-    sub_cfg = sub_cfg or SubstitutionConfig()
-    contam_cfg = contam_cfg or ContaminationConfig()
-    per_site: dict[str, dict] = {}
-    stats: dict[str, dict] = {}
-
-    for site in sites:
-        recs = store.records(sites=[site])
-        by_grid: dict[int, EventRecord] = {}
-        for r in recs:
-            dt = Timeline.parse_timestamp(r.timestamp)
-            if dt is None:
-                continue
-            by_grid[Timeline.slot_of(dt, GRID_EPOCH)] = r
-        if not by_grid:
-            continue
-
-        # The index already stores each recording's contamination verdict, so
-        # reuse it rather than re-deriving it from indicators the record does
-        # not keep.  One decision point, one source of truth.
-        verdicts = {g: contamination_from_record(r) for g, r in by_grid.items()}
-        points = select_points(site, by_grid, by_grid, sub_cfg, contam_cfg,
-                               classes=verdicts)
-        stats[site] = summarise(points)
-
-        # Re-point the excerpt at the substitute's audio while keeping the row's
-        # identity as *this hour*.  `source_name` deliberately stays put: it is
-        # the row's unique key and what the index uses to name the hour, so it
-        # must not be swapped for a neighbour's (which would collide).  The
-        # renderer reads `origin_path` instead - see EventRecord.audio_path.
-        updates = []
-        for p in points:
-            if not p.substituted:
-                continue
-            src = p.record
-            own = p.own_record
-            if src is own:
-                continue
-            updates.append(
-                (
-                    # `cut_s` keeps describing the hour's OWN recording; the
-                    # borrowed excerpt's cut goes in `origin_cut_s`.  Keeping them
-                    # separate is what stops the renderer reading the neighbour's
-                    # file at this hour's offset and extracting the wrong audio.
-                    own.cut_s, own.event_s, src.score, src.score_norm,
-                    src.novelty, src.transient, src.contrast, src.flatness,
-                    src.tonality, src.rms_db, src.peak_db,
-                    int(bool(src.passes_gate)),
-                    p.origin_grid, p.origin_name, src.source_path,
-                    src.cut_s, src.event_s, p.reason,
-                    p.own_score, int(bool(p.contamination.wind)),
-                    int(bool(p.contamination.clipped)),
-                    int(bool(p.contamination.sustained)),
-                    site, own.source_name,
-                )
-            )
-        if updates:
-            with store.conn:  # one transaction: all of it, or none of it
-                store.conn.executemany(
-                    """UPDATE points SET
-                         cut_s=?, event_s=?, score=?, score_norm=?, novelty=?,
-                         transient=?, contrast=?, flatness=?, tonality=?,
-                         rms_db=?, peak_db=?, passes_gate=?,
-                         substituted=1, origin_grid=?, origin_name=?,
-                         origin_path=?, origin_cut_s=?, origin_event_s=?,
-                         substitution_reason=?,
-                         noise_score=?, noise_wind=?, noise_clipped=?,
-                         noise_sustained=?
-                       WHERE site=? AND source_name=?""",
-                    updates,
-                )
-        per_site[site] = {
-            "hours": len(points),
-            "substituted": len(updates),
-        }
-
-    totals = {
-        "substituted": sum(v["substituted"] for v in per_site.values()),
-        "hours": sum(v["hours"] for v in per_site.values()),
-    }
-    return {"per_site": per_site, "totals": totals, "detail": stats}
+    with store.conn:
+        cur = store.conn.execute(
+            """
+            UPDATE points
+               SET substituted = 0,
+                   origin_grid = NULL,
+                   origin_name = NULL,
+                   origin_path = NULL,
+                   origin_cut_s = NULL,
+                   origin_event_s = NULL,
+                   substitution_reason = NULL
+             WHERE substituted = 1
+                OR origin_name IS NOT NULL
+                OR origin_path IS NOT NULL
+            """
+        )
+        n = cur.rowcount or 0
+    return n
 
 
 def _collect(
